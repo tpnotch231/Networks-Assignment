@@ -7,7 +7,7 @@
 #include<arpa/inet.h>
 #include<sys/time.h>
 #include"packet.h"
-#define RETRANSMISSIONRATE 2
+#define RETRANSMISSIONRATE 2		//Seconds
 //PACKET_SIZE is defined in header file messageDef.h, to facilitate similar definitions in client and server.
 int main(int argc, char *argv[])
 {
@@ -51,7 +51,6 @@ int main(int argc, char *argv[])
 			break; 
 		}
 		p.payloadSize=read(file,p.payload,PACKET_SIZE);
-		printf("%d\t%d\n",p.seqNo+p.payloadSize,endOfFile);
 		if(p.seqNo+p.payloadSize==endOfFile)
 		{
 			SETLASTPACKET(p);
