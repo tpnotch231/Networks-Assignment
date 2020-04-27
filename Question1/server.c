@@ -3,9 +3,11 @@
 #include<string.h>
 #include<unistd.h>
 #include<time.h>
+#include<fcntl.h>
 #include<sys/socket.h>
+#include<signal.h>
 #include<arpa/inet.h>
-#include"messageDef.h"
+#include"packet.h"
 #define PDR 10			//Implemented as a percentage so must always be less than 100. Any value greater than 100 will make the program drop all the programs.
 int file,listener,cs1;
 void handler(int sig)
@@ -24,6 +26,7 @@ int main(int argc, char *argv[])
 	signal(SIGUSR1,handler);
 	//Purpose explained later.
 	signal(SIGINT,handler);
+	signal(SIGPIPE,SIG_IGN);
 	//Graceful termination for the parent process. Main way of stopping server. 
 	if(argc==1)
 	{
@@ -42,8 +45,8 @@ int main(int argc, char *argv[])
 	memset(&selfAddr,0,sizeof(selfAddr));
 	selfAddr.sin_family=AF_INET;
 	selfAddr.sin_port=htons(PORT_NO);
-	selfAddr.sin_addr.s_addr=inet_addr("127.0.0.1");
-	if((bind(listener,&selfAddr,sizeof(struct sockaddr_in)))==-1)
+	selfAddr.sin_addr.s_addr=inet_addr(SERVER_IP_ADDR_STR);
+	if((bind(listener,(struct sockaddr*)&selfAddr,sizeof(struct sockaddr_in)))==-1)
 	{
 		perror("Error binding listening socket");
 		if(-1==close(listener))
@@ -73,7 +76,7 @@ int main(int argc, char *argv[])
 	cl2l=sizeof cl2Addr;
 	while(1)
 	{
-		cs1=accept(listener,&cl1Addr,&cl1l)
+		cs1=accept(listener,(struct sockaddr*)&cl1Addr,&cl1l);
 		if(cl1l<0)
 		{
 			perror("Error in accepting first socket");
@@ -95,7 +98,7 @@ int main(int argc, char *argv[])
 		{
 			perror("Error closing channel in parent.");
 		}
-		cs1=accept(listener,&cl2Addr,&cl2l);
+		cs1=accept(listener,(struct sockaddr*)&cl2Addr,&cl2l);
 		if(cl2l<0)
 		{
 			perror("Error in accepting second socket");
@@ -112,7 +115,7 @@ int main(int argc, char *argv[])
 			shutdown(cs1,2);
 			return 0;
 		}
-		else if(cl1Addr.sin_addr!=cl2Addr.sin_addr)
+		else if(cl1Addr.sin_addr.s_addr!=cl2Addr.sin_addr.s_addr)
 		{
 			//If two different programs try to contact the server, everything is stopped.
 			kill(child,SIGUSR1);
@@ -135,6 +138,10 @@ int main(int argc, char *argv[])
 		{
 			break;
 		}
+		if(-1==close(cs1))
+		{
+			perror("Error closing channel in parent.");
+		}
 	}
 	if(-1==close(listener))
 	{
@@ -154,18 +161,28 @@ int main(int argc, char *argv[])
 	SETNOTLASTPACKET(p);
 	while(!p.lastPacket)
 	{
-		recv(cs1,&p,sizeof(p),0);
+		if(0==recv(cs1,&p,sizeof(p),0))
+		{
+			//If the other socket has closed this connection break.
+			break;
+		}
 		if(rand()/(RAND_MAX/100 + 1)<PDR)
 		{
+			printf("Dropping a packet.\n");
 			SETNOTLASTPACKET(p);	//In case the packet dropped is the last packet.
 			continue;
 		}
 		printf("RCVD PKT: Seq. No %d of size %d Bytes from channel %d.\n",p.seqNo,p.payloadSize,p.channelID);
-		lseek(file,p.seqNo,SEEK_BEG);
+		lseek(file,p.seqNo,SEEK_SET);
 		if(p.payloadSize> -1)			//To handle the last packet when file size is a multiple of packet size()
+		{
 			write(file,p.payload,p.payloadSize);
+		}
 		SETACKPACKET(p);
-		send(cs1,&p,sizeof(p),0);
+		if(send(cs1,&p,sizeof(p),0)==-1)
+		{
+			perror("Error sending ACK");
+		}
 		printf("SENT ACK: for PKT with Seq. No %d from channel %d.\n",p.seqNo,p.channelID);
 	}
 	if(-1==close(cs1))
